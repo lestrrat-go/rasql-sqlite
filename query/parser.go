@@ -258,6 +258,14 @@ func (parser *parser) parseExpression(minimumPrecedence int) (Expression, error)
 		return nil, err
 	}
 	for {
+		if negated, ok := parser.matchIn(minimumPrecedence); ok {
+			values, err := parser.parseInValues()
+			if err != nil {
+				return nil, err
+			}
+			left = &InExpression{Expression: left, Negated: negated, Values: values}
+			continue
+		}
 		operator, precedence, ok := parser.binaryOperator()
 		if !ok || precedence < minimumPrecedence {
 			return left, nil
@@ -271,6 +279,63 @@ func (parser *parser) parseExpression(minimumPrecedence int) (Expression, error)
 			return nil, err
 		}
 		left = &BinaryExpression{Left: left, Operator: operator, Right: right}
+	}
+}
+
+// matchIn consumes an IN or NOT IN operator and reports whether it was
+// negated. It compares against comparisonPrecedence, which IN shares with the
+// other comparison operators, so a caller parsing a tighter-binding right
+// operand leaves the operator for its own caller to consume.
+func (parser *parser) matchIn(minimumPrecedence int) (bool, bool) {
+	if comparisonPrecedence < minimumPrecedence {
+		return false, false
+	}
+	current := parser.current()
+	if current.kind != tokenKeyword {
+		return false, false
+	}
+	switch current.text {
+	case "in":
+		parser.advance()
+		return false, true
+	case "not":
+		next := parser.peek(1)
+		if next.kind != tokenKeyword || next.text != "in" {
+			return false, false
+		}
+		parser.advance()
+		parser.advance()
+		return true, true
+	}
+	return false, false
+}
+
+// parseInValues parses the parenthesized value list on the right of IN. The
+// subquery and table-name forms SQLite also accepts there are reported as
+// unsupported rather than parsed as something else.
+func (parser *parser) parseInValues() ([]Expression, error) {
+	if !parser.match(tokenLeftParen) {
+		return nil, parser.errorf(parser.current(), "expected value list after IN")
+	}
+	if parser.match(tokenRightParen) {
+		return []Expression{}, nil
+	}
+	if current := parser.current(); current.kind == tokenKeyword && (current.text == "select" || current.text == "values" || current.text == "with") {
+		return nil, parser.errorf(current, "expected value list after IN; subqueries are unsupported")
+	}
+	var values []Expression
+	for {
+		value, err := parser.parseExpression(1)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, value)
+		if parser.match(tokenRightParen) {
+			return values, nil
+		}
+		if !parser.match(tokenComma) {
+			return nil, parser.errorf(parser.current(), "expected comma or closing parenthesis")
+		}
 	}
 }
 
@@ -406,12 +471,16 @@ func (parser *parser) parseIdentifier() (Identifier, error) {
 	return Identifier{Name: current.text, Quoted: current.quoted}, nil
 }
 
+// comparisonPrecedence is the binding power SQLite gives =, IS, LIKE, GLOB,
+// MATCH and IN, which all sit between AND and string concatenation.
+const comparisonPrecedence = 3
+
 func (parser *parser) binaryOperator() (string, int, bool) {
 	current := parser.current()
 	if current.kind == tokenOperator {
 		switch current.text {
 		case "=", "==", "!=", "<>", "<", "<=", ">", ">=":
-			return current.text, 3, true
+			return current.text, comparisonPrecedence, true
 		case "||":
 			return current.text, 4, true
 		case "+", "-":
@@ -432,13 +501,13 @@ func (parser *parser) binaryOperator() (string, int, bool) {
 	case "and":
 		return "AND", 2, true
 	case "is":
-		return "IS", 3, true
+		return "IS", comparisonPrecedence, true
 	case "like":
-		return "LIKE", 3, true
+		return "LIKE", comparisonPrecedence, true
 	case "glob":
-		return "GLOB", 3, true
+		return "GLOB", comparisonPrecedence, true
 	case "match":
-		return "MATCH", 3, true
+		return "MATCH", comparisonPrecedence, true
 	}
 	return "", 0, false
 }
@@ -496,6 +565,17 @@ func (parser *parser) current() token {
 
 func (parser *parser) previous() token {
 	return parser.tokens[parser.index-1]
+}
+
+// peek returns the token offset positions ahead of the current one, or the
+// final token once offset runs past the end. The token stream always ends in
+// tokenEOF, so a caller looking ahead never has to bounds-check.
+func (parser *parser) peek(offset int) token {
+	index := parser.index + offset
+	if index >= len(parser.tokens) {
+		return parser.tokens[len(parser.tokens)-1]
+	}
+	return parser.tokens[index]
 }
 
 func (parser *parser) advance() {

@@ -13,10 +13,14 @@ aliases; simple comma-separated table references; `WHERE`; `ORDER BY` with
 The supported expressions are qualified identifiers, qualified stars, string,
 decimal and hexadecimal number, blob, boolean, null, and current-time literals,
 parameters, function calls, parentheses, unary `+`, `-`, `~`, and `NOT`, plus binary arithmetic,
-comparison, `IS`, `IS NOT`, `LIKE`, `GLOB`, `MATCH`, `AND`, and `OR`.
+comparison, `IS`, `IS NOT`, `LIKE`, `GLOB`, `MATCH`, `AND`, `OR`, and `IN` or
+`NOT IN` over a parenthesized value list. An empty value list is accepted and
+kept, because SQLite reads `x IN ()` as false and `x NOT IN ()` as true for
+every `x`. The subquery and table-name forms on the right of `IN` are reported
+as unsupported rather than parsed as a value list.
 
 Joins, common table expressions, compound queries, grouping, windows,
-subqueries, `IN`, `BETWEEN`, `CASE`, and `ESCAPE` are outside the subset.
+subqueries, `BETWEEN`, `CASE`, and `ESCAPE` are outside the subset.
 
 ## DDL
 

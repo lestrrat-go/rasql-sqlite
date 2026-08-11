@@ -712,6 +712,11 @@ func (serializer *serializer) writeExpression(expression Expression, parentPrece
 			return fmt.Errorf("query: expression cannot be a nil call")
 		}
 		err = serializer.writeCallExpression(expression)
+	case *InExpression:
+		if expression == nil {
+			return fmt.Errorf("query: expression cannot be a nil IN expression")
+		}
+		err = serializer.writeInExpression(expression, precedence)
 	default:
 		err = fmt.Errorf("query: cannot serialize unsupported expression %T", expression)
 	}
@@ -838,6 +843,23 @@ func (serializer *serializer) writeBinaryExpression(expression *BinaryExpression
 	return serializer.writeExpression(expression.Right, precedence+1)
 }
 
+func (serializer *serializer) writeInExpression(expression *InExpression, precedence int) error {
+	if err := serializer.writeExpression(expression.Expression, precedence); err != nil {
+		return err
+	}
+	if expression.Negated {
+		serializer.WriteString(" NOT")
+	}
+	serializer.WriteString(" IN (")
+	if err := writeSeparated(serializer, expression.Values, ", ", func(value Expression) error {
+		return serializer.writeExpression(value, 0)
+	}); err != nil {
+		return fmt.Errorf("query: serialize IN value: %w", err)
+	}
+	serializer.WriteByte(')')
+	return nil
+}
+
 func (serializer *serializer) writeCallExpression(expression *CallExpression) error {
 	if err := serializer.writeQualifiedName(expression.Function); err != nil {
 		return fmt.Errorf("query: serialize function name: %w", err)
@@ -871,6 +893,11 @@ func expressionPrecedence(expression Expression) (int, error) {
 			return 0, fmt.Errorf("query: expression cannot be a nil binary expression")
 		}
 		return binaryPrecedence(expression.Operator)
+	case *InExpression:
+		if expression == nil {
+			return 0, fmt.Errorf("query: expression cannot be a nil IN expression")
+		}
+		return comparisonPrecedence, nil
 	default:
 		return 0, fmt.Errorf("query: cannot serialize unsupported expression %T", expression)
 	}

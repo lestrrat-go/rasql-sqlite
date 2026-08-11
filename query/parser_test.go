@@ -242,6 +242,108 @@ func TestParseSQLiteLexicalForms(t *testing.T) {
 	}
 }
 
+func TestParseInExpression(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		input string
+		want  query.Expression
+	}{
+		"value list": {
+			input: "SELECT id FROM tasks WHERE status IN ('todo', 'done')",
+			want: &query.InExpression{
+				Expression: identifierExpression("status"),
+				Values:     []query.Expression{text("todo"), text("done")},
+			},
+		},
+		"negated": {
+			input: "SELECT id FROM tasks WHERE status NOT IN ('done')",
+			want: &query.InExpression{
+				Expression: identifierExpression("status"),
+				Negated:    true,
+				Values:     []query.Expression{text("done")},
+			},
+		},
+		"empty list": {
+			input: "SELECT id FROM tasks WHERE status IN ()",
+			want: &query.InExpression{
+				Expression: identifierExpression("status"),
+				Values:     []query.Expression{},
+			},
+		},
+		"binds tighter than AND": {
+			input: "SELECT id FROM tasks WHERE done = FALSE AND status IN ('todo')",
+			want: &query.BinaryExpression{
+				Left: &query.BinaryExpression{
+					Left:     identifierExpression("done"),
+					Operator: "=",
+					Right:    &query.Literal{Kind: query.BooleanLiteral, Value: "false"},
+				},
+				Operator: "AND",
+				Right: &query.InExpression{
+					Expression: identifierExpression("status"),
+					Values:     []query.Expression{text("todo")},
+				},
+			},
+		},
+		"arithmetic operand": {
+			input: "SELECT id FROM tasks WHERE priority + 1 IN (2, 3)",
+			want: &query.InExpression{
+				Expression: &query.BinaryExpression{
+					Left:     identifierExpression("priority"),
+					Operator: "+",
+					Right:    number("1"),
+				},
+				Values: []query.Expression{number("2"), number("3")},
+			},
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			parsed, err := query.ParseStatement(test.input)
+			if err != nil {
+				t.Fatalf("ParseStatement() error = %v", err)
+			}
+			statement, ok := query.As[*query.SelectStatement](parsed)
+			if !ok {
+				t.Fatalf("ParseStatement() = %T, want *SelectStatement", parsed)
+			}
+			if !reflect.DeepEqual(statement.Where, test.want) {
+				t.Fatalf("Where = %#v, want %#v", statement.Where, test.want)
+			}
+		})
+	}
+}
+
+func TestParseInCheckConstraint(t *testing.T) {
+	t.Parallel()
+
+	parsed, err := query.ParseStatement(`CREATE TABLE "tasks" ("status" TEXT NOT NULL, CHECK (status IN ('todo', 'in_progress', 'done')))`)
+	if err != nil {
+		t.Fatalf("ParseStatement() error = %v", err)
+	}
+	statement, ok := query.As[*query.CreateTableStatement](parsed)
+	if !ok {
+		t.Fatalf("ParseStatement() = %T, want *CreateTableStatement", parsed)
+	}
+	if len(statement.Constraints) != 1 {
+		t.Fatalf("Constraints length = %d, want 1", len(statement.Constraints))
+	}
+	constraint := statement.Constraints[0]
+	if constraint.Kind != query.ConstraintCheck {
+		t.Fatalf("Constraints[0].Kind = %q, want %q", constraint.Kind, query.ConstraintCheck)
+	}
+	want := &query.InExpression{
+		Expression: identifierExpression("status"),
+		Values:     []query.Expression{text("todo"), text("in_progress"), text("done")},
+	}
+	if !reflect.DeepEqual(constraint.Expression, want) {
+		t.Fatalf("Constraints[0].Expression = %#v, want %#v", constraint.Expression, want)
+	}
+}
+
 func TestParseFailures(t *testing.T) {
 	t.Parallel()
 
@@ -254,6 +356,12 @@ func TestParseFailures(t *testing.T) {
 		"ALTER TABLE users ALTER COLUMN id TYPE TEXT",
 		"SELECT ?0",
 		"SELECT id; SELECT name",
+		"SELECT id FROM users WHERE status IN",
+		"SELECT id FROM users WHERE status IN 'todo'",
+		"SELECT id FROM users WHERE status IN ('todo'",
+		"SELECT id FROM users WHERE status IN ('todo' 'done')",
+		"SELECT id FROM users WHERE status IN (SELECT status FROM archived)",
+		"SELECT id FROM users WHERE status NOT IN",
 	}
 	for _, input := range tests {
 		t.Run(input, func(t *testing.T) {
@@ -308,4 +416,8 @@ func identifierExpression(parts ...string) *query.IdentifierExpression {
 
 func number(value string) *query.Literal {
 	return &query.Literal{Kind: query.NumberLiteral, Value: value}
+}
+
+func text(value string) *query.Literal {
+	return &query.Literal{Kind: query.StringLiteral, Value: value}
 }

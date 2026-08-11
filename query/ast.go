@@ -391,3 +391,20 @@ type CallExpression struct {
 }
 
 func (*CallExpression) expression() {}
+
+// InExpression tests whether Expression equals any value in Values, and
+// negates that test when Negated is set. It covers the parenthesized value
+// list form of SQLite's IN operator only. The subquery and table-name forms
+// on the right of IN are separate grammar branches that this package does not
+// parse, so a Values list is never a stand-in for one.
+//
+// An empty Values list is legitimate. SQLite defines "x IN ()" as false and
+// "x NOT IN ()" as true for every x, including NULL, so the list is written
+// back out empty rather than dropped.
+type InExpression struct {
+	Expression Expression
+	Negated    bool
+	Values     []Expression
+}
+
+func (*InExpression) expression() {}
