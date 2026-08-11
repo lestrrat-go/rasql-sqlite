@@ -42,6 +42,18 @@ func TestSerializeRoundTrip(t *testing.T) {
 			input: "drop view if exists main.active_users",
 			want:  "DROP VIEW IF EXISTS main.active_users;",
 		},
+		"in value list": {
+			input: "select id from tasks where status in ('todo', 'in_progress') and priority not in (0)",
+			want:  "SELECT id FROM tasks WHERE status IN ('todo', 'in_progress') AND priority NOT IN (0);",
+		},
+		"in empty list": {
+			input: "select id from tasks where status in ()",
+			want:  "SELECT id FROM tasks WHERE status IN ();",
+		},
+		"in check constraint": {
+			input: `create table tasks ("status" text not null, check (status in ('todo', 'done')))`,
+			want:  "CREATE TABLE tasks (\"status\" text NOT NULL, CHECK (status IN ('todo', 'done')));",
+		},
 		"multiple statements": {
 			input: "select id from users; drop index if exists users_email",
 			want:  "SELECT id FROM users;\nDROP INDEX IF EXISTS users_email;",

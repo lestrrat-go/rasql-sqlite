@@ -21,7 +21,8 @@ shows how to parse, modify, and serialize a statement.
   relations, `WHERE`, `ORDER BY`, and `LIMIT` with `OFFSET` or comma syntax.
 - Core expressions: identifiers, stars, string, decimal or hexadecimal number, blob, boolean, null,
   current-time literals, SQLite parameters, calls, unary operators, arithmetic,
-  comparison, `IS`, `LIKE`, `GLOB`, `MATCH`, `AND`, and `OR`.
+  comparison, `IS`, `LIKE`, `GLOB`, `MATCH`, `AND`, `OR`, and `IN` or `NOT IN`
+  over a parenthesized value list.
 - `CREATE TABLE`, including temporary tables, `IF NOT EXISTS`, declared types,
   supported column and table constraints, conflict clauses, generated columns,
   `WITHOUT ROWID`, `STRICT`, and `AS SELECT`.
