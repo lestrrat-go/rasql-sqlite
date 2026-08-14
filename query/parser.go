@@ -471,6 +471,45 @@ func (parser *parser) parseIdentifier() (Identifier, error) {
 	return Identifier{Name: current.text, Quoted: current.quoted}, nil
 }
 
+// parseTableName parses the table name a CREATE TABLE statement declares.
+// It behaves exactly like parseQualifiedName except that it also accepts a
+// single-quoted string literal in place of an identifier, matching SQLite's
+// own compatibility fallback: a string constant is read as an identifier
+// wherever the grammar allows only an identifier and nothing else could
+// follow (https://www.sqlite.org/lang_keywords.html, note 3). This is why
+// FTS5's own shadow tables round-trip through sqlite_master at all — SQLite
+// persists their CREATE TABLE text with the table name single-quoted, e.g.
+// CREATE TABLE 'posts_fts_data'(...), even though single quotes otherwise
+// always delimit a string literal. The fallback is applied only here, at
+// the one position the grammar allows nothing but a table name, so it
+// cannot be mistaken for loosening string-literal parsing anywhere else:
+// a DEFAULT, a CHECK expression, or an index's WHERE clause still lexes a
+// single-quoted value as a string, never as a name.
+func (parser *parser) parseTableName() (QualifiedName, error) {
+	identifier, err := parser.parseTableNameIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	name := QualifiedName{identifier}
+	for parser.match(tokenDot) {
+		identifier, err := parser.parseTableNameIdentifier()
+		if err != nil {
+			return nil, err
+		}
+		name = append(name, identifier)
+	}
+	return name, nil
+}
+
+func (parser *parser) parseTableNameIdentifier() (Identifier, error) {
+	current := parser.current()
+	if current.kind == tokenString {
+		parser.advance()
+		return Identifier{Name: current.text, Quoted: true}, nil
+	}
+	return parser.parseIdentifier()
+}
+
 // comparisonPrecedence is the binding power SQLite gives =, IS, LIKE, GLOB,
 // MATCH and IN, which all sit between AND and string concatenation.
 const comparisonPrecedence = 3
