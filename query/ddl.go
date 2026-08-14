@@ -30,7 +30,7 @@ func (parser *parser) parseCreateTable(persistence RelationPersistence) (*Create
 	if err != nil {
 		return nil, err
 	}
-	name, err := parser.parseQualifiedName()
+	name, err := parser.parseTableName()
 	if err != nil {
 		return nil, err
 	}

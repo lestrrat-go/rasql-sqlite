@@ -209,6 +209,24 @@ func TestParseSQLiteDDLForms(t *testing.T) {
 			input: "DROP TRIGGER IF EXISTS main.users_audit",
 			want:  &query.DropStatement{ObjectType: query.DropTrigger, IfExists: true, Name: qualifiedName("main", "users_audit")},
 		},
+		"single-quoted table name": {
+			// SQLite persists this exact form for FTS5's own shadow
+			// tables: sqlite_master.sql for an fts5 table's "_data" table
+			// reads CREATE TABLE 'posts_fts_data'(...), single-quoting the
+			// table name even though single quotes otherwise always
+			// delimit a string literal. SQLite's own compatibility
+			// fallback reads a string constant as an identifier wherever
+			// the grammar allows only a name; this proves rasql-sqlite's
+			// parser now does the same in table-name position.
+			input: "CREATE TABLE 'posts_fts_data'(id INTEGER PRIMARY KEY, block BLOB)",
+			want: &query.CreateTableStatement{
+				Name: query.QualifiedName{{Name: "posts_fts_data", Quoted: true}},
+				Columns: []query.ColumnDefinition{
+					{Name: identifierValue("id"), Type: query.DataType{Words: []string{"integer"}}, Constraints: []query.ColumnConstraint{{Kind: query.ConstraintPrimaryKey}}},
+					{Name: identifierValue("block"), Type: query.DataType{Words: []string{"blob"}}},
+				},
+			},
+		},
 	}
 
 	for name, test := range tests {
@@ -341,6 +359,38 @@ func TestParseInCheckConstraint(t *testing.T) {
 	}
 	if !reflect.DeepEqual(constraint.Expression, want) {
 		t.Fatalf("Constraints[0].Expression = %#v, want %#v", constraint.Expression, want)
+	}
+}
+
+// TestParseSingleQuotedTableNameKeepsOtherStringLiterals proves that
+// accepting a single-quoted table name did not loosen single-quoted string
+// literal parsing anywhere else in the same statement: a DEFAULT and a
+// CHECK constraint, each spelling a single-quoted value, still parse as
+// ordinary string literal expressions rather than as identifiers.
+func TestParseSingleQuotedTableNameKeepsOtherStringLiterals(t *testing.T) {
+	t.Parallel()
+
+	parsed, err := query.ParseStatement(`CREATE TABLE 'docs_config'(k PRIMARY KEY, status TEXT DEFAULT 'pending' CHECK (status != 'deleted'))`)
+	if err != nil {
+		t.Fatalf("ParseStatement() error = %v", err)
+	}
+	statement, ok := query.As[*query.CreateTableStatement](parsed)
+	if !ok {
+		t.Fatalf("ParseStatement() = %T, want *CreateTableStatement", parsed)
+	}
+
+	wantName := query.QualifiedName{{Name: "docs_config", Quoted: true}}
+	if !reflect.DeepEqual(statement.Name, wantName) {
+		t.Fatalf("Name = %#v, want %#v", statement.Name, wantName)
+	}
+
+	status := statement.Columns[1]
+	wantConstraints := []query.ColumnConstraint{
+		{Kind: query.ConstraintDefault, Expression: text("pending")},
+		{Kind: query.ConstraintCheck, Expression: &query.BinaryExpression{Left: identifierExpression("status"), Operator: "!=", Right: text("deleted")}},
+	}
+	if !reflect.DeepEqual(status.Constraints, wantConstraints) {
+		t.Fatalf("Columns[1].Constraints = %#v, want %#v", status.Constraints, wantConstraints)
 	}
 }
 
